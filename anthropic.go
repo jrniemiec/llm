@@ -44,7 +44,7 @@ func newAnthropicProvider(apiKey, model string, maxOutputTokens int) (*Anthropic
 			Transport: &http.Transport{
 				Proxy:                 http.ProxyFromEnvironment,
 				ForceAttemptHTTP2:     false,
-				ResponseHeaderTimeout: 30 * time.Second,
+				ResponseHeaderTimeout: 120 * time.Second,
 			},
 		},
 	}, nil
