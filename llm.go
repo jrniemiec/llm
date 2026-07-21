@@ -31,6 +31,7 @@ type ProviderConfig struct {
 	Host            string // Ollama only
 	APIKey          string // resolved by the caller from env or config
 	MaxOutputTokens int
+	Think           bool // Ollama only: enable thinking/reasoning mode (e.g. Qwen3, DeepSeek-R1)
 }
 
 // New constructs a Provider from a ProviderConfig.
@@ -41,7 +42,7 @@ func New(cfg ProviderConfig) (Provider, error) {
 	case "openai":
 		return newOpenAIProvider(cfg.APIKey, cfg.Model)
 	case "ollama":
-		return newOllamaProvider(cfg.Host, cfg.Model)
+		return newOllamaProvider(cfg.Host, cfg.Model, cfg.Think)
 	default:
 		return nil, fmt.Errorf("llm: unknown provider %q", cfg.Provider)
 	}

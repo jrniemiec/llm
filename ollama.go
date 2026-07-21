@@ -16,10 +16,11 @@ import (
 type OllamaProvider struct {
 	host  string
 	model string
+	think bool
 	http  *http.Client
 }
 
-func newOllamaProvider(host, model string) (*OllamaProvider, error) {
+func newOllamaProvider(host, model string, think bool) (*OllamaProvider, error) {
 	host = strings.TrimRight(strings.TrimSpace(host), "/")
 	if host == "" {
 		host = "http://localhost:11434"
@@ -30,6 +31,7 @@ func newOllamaProvider(host, model string) (*OllamaProvider, error) {
 	return &OllamaProvider{
 		host:  host,
 		model: model,
+		think: think,
 		http: &http.Client{
 			Timeout: 0,
 			Transport: &http.Transport{
@@ -78,7 +80,7 @@ func (p *OllamaProvider) buildReq(systemPrompt string, messages []Message, strea
 		}
 		reqMsgs = append(reqMsgs, ollamaMsg{Role: role, Content: m.Content})
 	}
-	return json.Marshal(ollamaChatReq{Model: p.model, Messages: reqMsgs, Stream: stream})
+	return json.Marshal(ollamaChatReq{Model: p.model, Messages: reqMsgs, Stream: stream, Think: p.think})
 }
 
 func (p *OllamaProvider) Chat(ctx context.Context, systemPrompt string, messages []Message) (string, Usage, error) {
