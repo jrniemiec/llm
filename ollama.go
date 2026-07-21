@@ -33,9 +33,12 @@ func newOllamaProvider(host, model string) (*OllamaProvider, error) {
 		http: &http.Client{
 			Timeout: 0,
 			Transport: &http.Transport{
-				Proxy:                 http.ProxyFromEnvironment,
-				ForceAttemptHTTP2:     false,
-				ResponseHeaderTimeout: 30 * time.Second,
+				Proxy:             http.ProxyFromEnvironment,
+				ForceAttemptHTTP2: false,
+				// Local models (especially larger ones) can take >30s on cold start
+				// before producing the first response byte. 120s is generous enough
+				// for most hardware while still catching genuine hangs.
+				ResponseHeaderTimeout: 120 * time.Second,
 			},
 		},
 	}, nil
@@ -52,6 +55,7 @@ type ollamaChatReq struct {
 	Model    string      `json:"model"`
 	Messages []ollamaMsg `json:"messages"`
 	Stream   bool        `json:"stream"`
+	Think    bool        `json:"think"` // false disables thinking/reasoning mode (e.g. Qwen3)
 }
 
 type ollamaChatResp struct {
