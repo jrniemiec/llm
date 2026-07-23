@@ -28,12 +28,15 @@ type AnthropicProvider struct {
 }
 
 // New constructs an AnthropicProvider. apiKey must be non-empty.
-func newAnthropicProvider(apiKey, model string, maxOutputTokens int) (*AnthropicProvider, error) {
+func newAnthropicProvider(apiKey, model string, maxOutputTokens int, timeout time.Duration) (*AnthropicProvider, error) {
 	if strings.TrimSpace(apiKey) == "" {
 		return nil, errors.New("anthropic: apiKey is empty")
 	}
 	if maxOutputTokens <= 0 {
 		maxOutputTokens = defaultMaxOutput
+	}
+	if timeout <= 0 {
+		timeout = 120 * time.Second
 	}
 	return &AnthropicProvider{
 		apiKey:          apiKey,
@@ -44,7 +47,7 @@ func newAnthropicProvider(apiKey, model string, maxOutputTokens int) (*Anthropic
 			Transport: &http.Transport{
 				Proxy:                 http.ProxyFromEnvironment,
 				ForceAttemptHTTP2:     false,
-				ResponseHeaderTimeout: 120 * time.Second,
+				ResponseHeaderTimeout: timeout,
 			},
 		},
 	}, nil

@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // Usage holds token counts for a single LLM call.
@@ -31,14 +32,15 @@ type ProviderConfig struct {
 	Host            string // Ollama only
 	APIKey          string // resolved by the caller from env or config
 	MaxOutputTokens int
-	Think           bool // Ollama only: enable thinking/reasoning mode (e.g. Qwen3, DeepSeek-R1)
+	Timeout         time.Duration // response header timeout; 0 = provider default (120s for Anthropic)
+	Think           bool          // Ollama only: enable thinking/reasoning mode (e.g. Qwen3, DeepSeek-R1)
 }
 
 // New constructs a Provider from a ProviderConfig.
 func New(cfg ProviderConfig) (Provider, error) {
 	switch strings.ToLower(strings.TrimSpace(cfg.Provider)) {
 	case "anthropic":
-		return newAnthropicProvider(cfg.APIKey, cfg.Model, cfg.MaxOutputTokens)
+		return newAnthropicProvider(cfg.APIKey, cfg.Model, cfg.MaxOutputTokens, cfg.Timeout)
 	case "openai":
 		return newOpenAIProvider(cfg.APIKey, cfg.Model)
 	case "ollama":
