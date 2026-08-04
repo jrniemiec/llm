@@ -34,13 +34,25 @@ type ProviderConfig struct {
 	MaxOutputTokens int
 	Timeout         time.Duration // response header timeout; 0 = provider default (120s for Anthropic)
 	Think           bool          // Ollama only: enable thinking/reasoning mode (e.g. Qwen3, DeepSeek-R1)
+	Thinking        string        // Anthropic only: "" (omit), ThinkingDisabled, or ThinkingAdaptive
 }
+
+// Anthropic thinking modes for ProviderConfig.Thinking. The zero value ""
+// omits the `thinking` request parameter entirely, preserving the wire format
+// used before adaptive thinking existed.
+//
+// Note this is distinct from ProviderConfig.Think, which is the Ollama
+// reasoning-mode flag.
+const (
+	ThinkingDisabled = "disabled"
+	ThinkingAdaptive = "adaptive"
+)
 
 // New constructs a Provider from a ProviderConfig.
 func New(cfg ProviderConfig) (Provider, error) {
 	switch strings.ToLower(strings.TrimSpace(cfg.Provider)) {
 	case "anthropic":
-		return newAnthropicProvider(cfg.APIKey, cfg.Model, cfg.MaxOutputTokens, cfg.Timeout)
+		return newAnthropicProvider(cfg.APIKey, cfg.Model, cfg.MaxOutputTokens, cfg.Timeout, cfg.Thinking)
 	case "openai":
 		return newOpenAIProvider(cfg.APIKey, cfg.Model)
 	case "ollama":

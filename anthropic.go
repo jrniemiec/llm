@@ -24,13 +24,23 @@ type AnthropicProvider struct {
 	apiKey          string
 	model           string
 	maxOutputTokens int
+	thinking        string
+	baseURL         string // overridden in tests
 	http            *http.Client
 }
 
 // New constructs an AnthropicProvider. apiKey must be non-empty.
-func newAnthropicProvider(apiKey, model string, maxOutputTokens int, timeout time.Duration) (*AnthropicProvider, error) {
+// thinking is "" (omit the parameter), "disabled", or "adaptive".
+func newAnthropicProvider(apiKey, model string, maxOutputTokens int, timeout time.Duration, thinking string) (*AnthropicProvider, error) {
 	if strings.TrimSpace(apiKey) == "" {
 		return nil, errors.New("anthropic: apiKey is empty")
+	}
+	thinking = strings.ToLower(strings.TrimSpace(thinking))
+	switch thinking {
+	case "", ThinkingDisabled, ThinkingAdaptive:
+	default:
+		return nil, fmt.Errorf("anthropic: invalid thinking mode %q (want %q, %q, or empty)",
+			thinking, ThinkingDisabled, ThinkingAdaptive)
 	}
 	if maxOutputTokens <= 0 {
 		maxOutputTokens = defaultMaxOutput
@@ -42,6 +52,8 @@ func newAnthropicProvider(apiKey, model string, maxOutputTokens int, timeout tim
 		apiKey:          apiKey,
 		model:           model,
 		maxOutputTokens: maxOutputTokens,
+		thinking:        thinking,
+		baseURL:         anthropicAPIBase,
 		http: &http.Client{
 			Timeout: 0,
 			Transport: &http.Transport{
@@ -65,7 +77,15 @@ type anthropicReq struct {
 	MaxTokens int            `json:"max_tokens"`
 	System    string         `json:"system,omitempty"`
 	Messages  []anthropicMsg `json:"messages"`
+	Thinking  *thinkingCfg   `json:"thinking,omitempty"`
 	Stream    bool           `json:"stream,omitempty"`
+}
+
+// thinkingCfg is the Anthropic `thinking` request parameter. Omitted entirely
+// when the provider's thinking mode is "", which preserves the pre-4.6 wire
+// format for models whose handling of an explicit "disabled" is untested.
+type thinkingCfg struct {
+	Type string `json:"type"`
 }
 
 type anthropicContent struct {
@@ -79,9 +99,10 @@ type anthropicUsage struct {
 }
 
 type anthropicResp struct {
-	Content []anthropicContent `json:"content"`
-	Usage   anthropicUsage     `json:"usage"`
-	Error   *anthropicError    `json:"error,omitempty"`
+	Content    []anthropicContent `json:"content"`
+	StopReason string             `json:"stop_reason,omitempty"`
+	Usage      anthropicUsage     `json:"usage"`
+	Error      *anthropicError    `json:"error,omitempty"`
 }
 
 type anthropicError struct {
@@ -120,6 +141,9 @@ func (p *AnthropicProvider) buildReq(systemPrompt string, messages []Message, st
 		Messages:  msgs,
 		Stream:    stream,
 	}
+	if p.thinking != "" {
+		r.Thinking = &thinkingCfg{Type: p.thinking}
+	}
 	if sp := strings.TrimSpace(systemPrompt); sp != "" {
 		r.System = sp
 	}
@@ -127,7 +151,7 @@ func (p *AnthropicProvider) buildReq(systemPrompt string, messages []Message, st
 }
 
 func (p *AnthropicProvider) newRequest(ctx context.Context, body []byte) (*http.Request, error) {
-	req, err := http.NewRequestWithContext(ctx, "POST", anthropicAPIBase, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, "POST", p.baseURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -175,14 +199,29 @@ func (p *AnthropicProvider) Chat(ctx context.Context, systemPrompt string, messa
 	if out.Error != nil {
 		return "", Usage{}, errors.New(out.Error.Message)
 	}
-	if len(out.Content) == 0 {
-		return "", Usage{}, errors.New("anthropic: empty response content")
-	}
 	u := Usage{
 		InputTokens:  out.Usage.InputTokens,
 		OutputTokens: out.Usage.OutputTokens,
 	}
-	return out.Content[0].Text, u, nil
+	if len(out.Content) == 0 {
+		return "", u, errors.New("anthropic: empty response content")
+	}
+	// The answer is not necessarily the first block — models with thinking
+	// enabled lead with a thinking block. Concatenate every text block, which
+	// reconstructs the same string ChatStream accumulates from text deltas.
+	var sb strings.Builder
+	for _, c := range out.Content {
+		if c.Type == "text" {
+			sb.WriteString(c.Text)
+		}
+	}
+	if sb.Len() == 0 {
+		if out.StopReason != "" {
+			return "", u, fmt.Errorf("anthropic: response contained no text content (stop_reason: %s)", out.StopReason)
+		}
+		return "", u, errors.New("anthropic: response contained no text content")
+	}
+	return sb.String(), u, nil
 }
 
 func (p *AnthropicProvider) ChatStream(
