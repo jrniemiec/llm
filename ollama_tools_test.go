@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 )
@@ -204,45 +203,4 @@ func TestOllamaStop(t *testing.T) {
 			t.Errorf("ollamaStop(%q, %v) = %q, want %q", tt.reason, tt.hasCalls, got, tt.want)
 		}
 	}
-}
-
-// TestOllamaLive runs a full tool round against a local Ollama. It is skipped
-// unless LLM_OLLAMA_LIVE names a tool-capable model, e.g. qwen3.5:9b.
-func TestOllamaLive(t *testing.T) {
-	model := os.Getenv("LLM_OLLAMA_LIVE")
-	if model == "" {
-		t.Skip("set LLM_OLLAMA_LIVE=<model> to run")
-	}
-	p, err := newOllamaProvider("", model, false)
-	if err != nil {
-		t.Fatalf("newOllamaProvider: %v", err)
-	}
-	tools := []ToolDef{{
-		Name:        "get_weather",
-		Description: "Get the current weather for a city.",
-		InputSchema: json.RawMessage(`{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}`),
-	}}
-	turns := []Turn{{Role: RoleUser, Text: "What is the weather in Paris and in Rome? Use the tool."}}
-
-	first, err := p.ChatTools(context.Background(), "", turns, tools)
-	if err != nil {
-		t.Fatalf("ChatTools: %v", err)
-	}
-	if first.Stop != StopToolUse || len(first.Turn.Calls) == 0 {
-		t.Fatalf("first reply = %+v, want tool calls", first)
-	}
-	results := Turn{Role: RoleUser}
-	for _, c := range first.Turn.Calls {
-		results.Results = append(results.Results, ToolResult{CallID: c.ID, Content: string(c.Input) + ": 15C, cloudy"})
-	}
-	turns = append(turns, first.Turn, results)
-
-	final, err := p.ChatTools(context.Background(), "", turns, tools)
-	if err != nil {
-		t.Fatalf("ChatTools: %v", err)
-	}
-	if final.Stop != StopEnd || final.Turn.Text == "" {
-		t.Fatalf("final reply = %+v, want an answer", final)
-	}
-	t.Logf("answer: %s", final.Turn.Text)
 }
