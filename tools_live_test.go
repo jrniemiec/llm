@@ -107,18 +107,65 @@ func TestAnthropicLive(t *testing.T) {
 		replies := liveToolRound(t, p)
 		thought := false
 		for _, r := range replies[:len(replies)-1] { // turns that were sent back
-			var blocks []anthropicBlock
-			if err := json.Unmarshal(r.Raw, &blocks); err != nil {
-				t.Fatalf("decode Raw: %v", err)
-			}
-			for _, b := range blocks {
-				thought = thought || b.Type == "thinking"
-			}
+			thought = thought || hasThinking(t, r.Raw)
 		}
 		if !thought {
 			t.Log("no thinking block in a replayed turn; thinking replay not exercised")
 		}
 	})
+
+	// Sending a tool-use reply back without its thinking block must be
+	// rejected. This is why Turn.Raw exists. The model may not think, so the
+	// first request is tried up to 3 times before the test is skipped.
+	t.Run("thinking dropped", func(t *testing.T) {
+		p, err := newAnthropicProvider(key, model, 8192, 0, ThinkingAdaptive)
+		if err != nil {
+			t.Fatalf("newAnthropicProvider: %v", err)
+		}
+		ctx := context.Background()
+		ask := Turn{Role: RoleUser, Text: "Think about which cities to check, then use the tool to get the weather in Paris and in Rome."}
+
+		var first ToolReply
+		for try := 1; ; try++ {
+			first, err = p.ChatTools(ctx, "", []Turn{ask}, liveTools)
+			if err != nil {
+				t.Fatalf("ChatTools: %v", err)
+			}
+			if first.Stop == StopToolUse && hasThinking(t, first.Turn.Raw) {
+				break
+			}
+			if try == 3 {
+				t.Skip("no tool-use reply with a thinking block after 3 tries")
+			}
+		}
+
+		// Rebuilt from Text and Calls only, so the thinking block is gone.
+		stripped := Turn{Role: RoleAssistant, Text: first.Turn.Text, Calls: first.Turn.Calls}
+		results := Turn{Role: RoleUser}
+		for _, c := range first.Turn.Calls {
+			results.Results = append(results.Results, ToolResult{CallID: c.ID, Content: "15C, cloudy"})
+		}
+		_, err = p.ChatTools(ctx, "", []Turn{ask, stripped, results}, liveTools)
+		if err == nil {
+			t.Fatal("request without the thinking block was accepted; want a 400 error")
+		}
+		t.Logf("rejected as expected: %v", err)
+	})
+}
+
+// hasThinking reports whether Anthropic content in raw has a thinking block.
+func hasThinking(t *testing.T, raw json.RawMessage) bool {
+	t.Helper()
+	var blocks []anthropicBlock
+	if err := json.Unmarshal(raw, &blocks); err != nil {
+		t.Fatalf("decode Raw: %v", err)
+	}
+	for _, b := range blocks {
+		if b.Type == "thinking" {
+			return true
+		}
+	}
+	return false
 }
 
 func TestOpenAILive(t *testing.T) {
