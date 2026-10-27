@@ -21,7 +21,7 @@ func (p *OpenAIProvider) ChatTools(ctx context.Context, systemPrompt string, tur
 	}
 	resp, err := p.client.Chat.Completions.New(ctx, params)
 	if err != nil {
-		return ToolReply{}, err
+		return ToolReply{}, openAIError(err)
 	}
 	u := Usage{
 		InputTokens:  int(resp.Usage.PromptTokens),

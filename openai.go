@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	openai "github.com/openai/openai-go/v3"
@@ -26,6 +27,16 @@ func newOpenAIProvider(apiKey, model string) (*OpenAIProvider, error) {
 }
 
 func (p *OpenAIProvider) Name() string { return "openai:" + string(p.model) }
+
+// openAIError returns err wrapping ErrContextFull when it is OpenAI's error
+// for a prompt that doesn't fit the context window, else err unchanged.
+func openAIError(err error) error {
+	var apiErr *openai.Error
+	if errors.As(err, &apiErr) && apiErr.Code == "context_length_exceeded" {
+		return fmt.Errorf("openai: %w: %s", ErrContextFull, apiErr.Message)
+	}
+	return err
+}
 
 func (p *OpenAIProvider) buildMessages(systemPrompt string, messages []Message) []openai.ChatCompletionMessageParamUnion {
 	out := make([]openai.ChatCompletionMessageParamUnion, 0, 1+len(messages))
@@ -52,7 +63,7 @@ func (p *OpenAIProvider) Chat(ctx context.Context, systemPrompt string, messages
 		Messages: msgs,
 	})
 	if err != nil {
-		return "", Usage{}, err
+		return "", Usage{}, openAIError(err)
 	}
 	if len(resp.Choices) == 0 {
 		return "", Usage{}, errors.New("openai: empty response choices")
@@ -100,7 +111,7 @@ func (p *OpenAIProvider) ChatStream(
 		}
 	}
 	if err := stream.Err(); err != nil {
-		return sb.String(), u, err
+		return sb.String(), u, openAIError(err)
 	}
 	return sb.String(), u, nil
 }

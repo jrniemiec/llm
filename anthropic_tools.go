@@ -208,6 +208,8 @@ func anthropicStop(s string) string {
 		return StopToolUse
 	case "max_tokens":
 		return StopMaxTokens
+	case "model_context_window_exceeded":
+		return StopContextFull
 	case "refusal":
 		return StopRefusal
 	default:

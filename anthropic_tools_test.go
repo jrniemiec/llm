@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -156,16 +157,44 @@ func TestBuildToolReqRejectsBadTurns(t *testing.T) {
 
 func TestAnthropicStop(t *testing.T) {
 	tests := map[string]string{
-		"end_turn":      StopEnd,
-		"stop_sequence": StopEnd,
-		"tool_use":      StopToolUse,
-		"max_tokens":    StopMaxTokens,
-		"refusal":       StopRefusal,
-		"pause_turn":    "pause_turn",
+		"end_turn":                      StopEnd,
+		"stop_sequence":                 StopEnd,
+		"tool_use":                      StopToolUse,
+		"max_tokens":                    StopMaxTokens,
+		"model_context_window_exceeded": StopContextFull,
+		"refusal":                       StopRefusal,
+		"pause_turn":                    "pause_turn",
 	}
 	for in, want := range tests {
 		if got := anthropicStop(in); got != want {
 			t.Errorf("anthropicStop(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestAnthropicContextFull(t *testing.T) {
+	reply := func(status int, body string) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			io.Copy(io.Discard, r.Body)
+			w.WriteHeader(status)
+			io.WriteString(w, body)
+		}
+	}
+	for _, msg := range []string{
+		"prompt is too long: 215000 tokens > 200000 maximum",
+		"input length and `max_tokens` exceed context limit: 190000 + 16000 > 200000, decrease input length or `max_tokens` and try again",
+	} {
+		p := newTestProvider(t, "", reply(http.StatusBadRequest,
+			`{"type": "error", "error": {"type": "invalid_request_error", "message": "`+msg+`"}}`))
+		_, err := p.ChatTools(context.Background(), "", []Turn{{Role: RoleUser, Text: "q"}}, nil)
+		if !errors.Is(err, ErrContextFull) || !strings.Contains(err.Error(), msg) {
+			t.Errorf("%q: err = %v, want ErrContextFull with Anthropic's message", msg, err)
+		}
+	}
+
+	p := newTestProvider(t, "", reply(http.StatusBadRequest,
+		`{"type": "error", "error": {"type": "invalid_request_error", "message": "max_tokens: Field required"}}`))
+	if _, err := p.ChatTools(context.Background(), "", []Turn{{Role: RoleUser, Text: "q"}}, nil); err == nil || errors.Is(err, ErrContextFull) {
+		t.Errorf("other error: err = %v, want an error that isn't ErrContextFull", err)
 	}
 }

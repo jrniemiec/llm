@@ -23,10 +23,6 @@ type OllamaProvider struct {
 	http       *http.Client
 }
 
-// ErrContextFull is returned by Ollama calls with ProviderConfig.NoTruncate
-// when the prompt doesn't fit the context window.
-var ErrContextFull = errors.New("prompt longer than the context window")
-
 func newOllamaProvider(cfg ProviderConfig) (*OllamaProvider, error) {
 	host, model := cfg.Host, cfg.Model
 	host = strings.TrimRight(strings.TrimSpace(host), "/")

@@ -170,9 +170,20 @@ func (p *AnthropicProvider) checkHTTPError(resp *http.Response) error {
 		Error anthropicError `json:"error"`
 	}
 	if json.Unmarshal(b, &e) == nil && e.Error.Message != "" {
+		if resp.StatusCode == http.StatusBadRequest && anthropicContextFull(e.Error.Message) {
+			return fmt.Errorf("anthropic: %w: %s", ErrContextFull, e.Error.Message)
+		}
 		return fmt.Errorf("anthropic API error %d: %s", resp.StatusCode, e.Error.Message)
 	}
 	return fmt.Errorf("anthropic API error %d: %s", resp.StatusCode, string(b))
+}
+
+// anthropicContextFull reports whether msg is Anthropic's error for a prompt
+// that doesn't fit the context window, e.g. "prompt is too long: 215000
+// tokens > 200000 maximum", or with max_tokens, "input length and `max_tokens`
+// exceed context limit: …".
+func anthropicContextFull(msg string) bool {
+	return strings.Contains(msg, "prompt is too long") || strings.Contains(msg, "exceed context limit")
 }
 
 func (p *AnthropicProvider) Chat(ctx context.Context, systemPrompt string, messages []Message) (string, Usage, error) {

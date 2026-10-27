@@ -4,6 +4,7 @@ package llm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -22,6 +23,11 @@ type Provider interface {
 	Chat(ctx context.Context, systemPrompt string, messages []Message) (string, Usage, error)
 	ChatStream(ctx context.Context, systemPrompt string, messages []Message, onDelta func(string) error) (string, Usage, error)
 }
+
+// ErrContextFull is returned when the prompt doesn't fit the model's context
+// window: by Anthropic and OpenAI, and by Ollama with ProviderConfig.NoTruncate.
+// The error includes the provider's message.
+var ErrContextFull = errors.New("prompt longer than the context window")
 
 // ProviderConfig is the minimal configuration needed to construct any provider.
 // Callers map their own app config type to this struct before calling New().

@@ -3,9 +3,11 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	openai "github.com/openai/openai-go/v3"
@@ -191,5 +193,40 @@ func TestOpenAIStop(t *testing.T) {
 		if got := openAIStop(in); got != want {
 			t.Errorf("openAIStop(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// newTestOpenAIError builds an OpenAI provider whose stub server answers
+// every request with status and body.
+func newTestOpenAIError(t *testing.T, status int, body string) *OpenAIProvider {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		io.WriteString(w, body)
+	}))
+	t.Cleanup(srv.Close)
+	return &OpenAIProvider{
+		client: openai.NewClient(option.WithAPIKey("test-key"), option.WithBaseURL(srv.URL+"/"), option.WithMaxRetries(0)),
+		model:  "gpt-test",
+	}
+}
+
+func TestOpenAIContextFull(t *testing.T) {
+	p := newTestOpenAIError(t, http.StatusBadRequest, `{"error": {
+		"message": "This model's maximum context length is 272000 tokens. However, your messages resulted in 280512 tokens. Please reduce the length of the messages.",
+		"type": "invalid_request_error", "param": "messages", "code": "context_length_exceeded"}}`)
+	_, err := p.ChatTools(context.Background(), "", []Turn{{Role: RoleUser, Text: "q"}}, nil)
+	if !errors.Is(err, ErrContextFull) || !strings.Contains(err.Error(), "maximum context length is 272000") {
+		t.Errorf("ChatTools: err = %v, want ErrContextFull with OpenAI's message", err)
+	}
+	if _, _, err := p.Chat(context.Background(), "", []Message{{Role: RoleUser, Content: "q"}}); !errors.Is(err, ErrContextFull) {
+		t.Errorf("Chat: err = %v, want ErrContextFull", err)
+	}
+
+	p = newTestOpenAIError(t, http.StatusBadRequest, `{"error": {
+		"message": "Invalid value for 'model'.", "type": "invalid_request_error", "param": "model", "code": "invalid_value"}}`)
+	if _, err := p.ChatTools(context.Background(), "", []Turn{{Role: RoleUser, Text: "q"}}, nil); err == nil || errors.Is(err, ErrContextFull) {
+		t.Errorf("other error: err = %v, want an error that isn't ErrContextFull", err)
 	}
 }

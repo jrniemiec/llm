@@ -62,6 +62,9 @@ const (
 	StopToolUse   = "tool_use"   // the model wants Calls run
 	StopMaxTokens = "max_tokens" // cut off at the output limit; Calls may be incomplete and must not be run
 	StopRefusal   = "refusal"    // the model declined to answer
+	// cut off at the end of the context window; Calls may be incomplete and
+	// must not be run
+	StopContextFull = "context_full"
 )
 
 // ToolReply is the result of ChatTools.
