@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -23,7 +24,7 @@ func newTestOllama(t *testing.T, status int, respBody string) (*OllamaProvider, 
 		io.WriteString(w, respBody)
 	}))
 	t.Cleanup(srv.Close)
-	p, err := newOllamaProvider(srv.URL, "qwen-test", false)
+	p, err := newOllamaProvider(ProviderConfig{Host: srv.URL, Model: "qwen-test"})
 	if err != nil {
 		t.Fatalf("newOllamaProvider: %v", err)
 	}
@@ -202,5 +203,42 @@ func TestOllamaStop(t *testing.T) {
 		if got := ollamaStop(tt.reason, tt.hasCalls); got != tt.want {
 			t.Errorf("ollamaStop(%q, %v) = %q, want %q", tt.reason, tt.hasCalls, got, tt.want)
 		}
+	}
+}
+
+// NumCtx and NoTruncate go into every request; unset, the request has none
+// of them, as before.
+func TestOllamaContextSettings(t *testing.T) {
+	p, reqs := newTestOllama(t, http.StatusOK, ollamaToolCallResp)
+	if _, err := p.ChatTools(context.Background(), "", []Turn{{Role: RoleUser, Text: "q"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if req := (*reqs)[0]; req.Options != nil || req.Truncate != nil || req.Shift != nil {
+		t.Errorf("unset: options %v, truncate %v, shift %v; want none", req.Options, req.Truncate, req.Shift)
+	}
+
+	p.numCtx, p.noTruncate = 32768, true
+	if _, err := p.ChatTools(context.Background(), "", []Turn{{Role: RoleUser, Text: "q"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	req := (*reqs)[1]
+	if req.Options == nil || req.Options.NumCtx != 32768 || req.Truncate == nil || *req.Truncate || req.Shift == nil || *req.Shift {
+		t.Errorf("set: options %v, truncate %v, shift %v; want num_ctx 32768, truncate and shift false", req.Options, req.Truncate, req.Shift)
+	}
+}
+
+// The reply of Ollama 0.31 to a prompt too long with truncate false.
+const ollamaContextFullResp = `{"error":"{\"error\":{\"code\":400,\"message\":\"request (8022 tokens) exceeds the available context size (1024 tokens), try increasing it\",\"type\":\"exceed_context_size_error\",\"n_prompt_tokens\":8022,\"n_ctx\":1024}}"}`
+
+func TestOllamaContextFull(t *testing.T) {
+	p, _ := newTestOllama(t, http.StatusBadRequest, ollamaContextFullResp)
+	_, err := p.ChatTools(context.Background(), "", []Turn{{Role: RoleUser, Text: "q"}}, nil)
+	if !errors.Is(err, ErrContextFull) || !strings.Contains(err.Error(), "request (8022 tokens) exceeds") {
+		t.Errorf("err = %v, want ErrContextFull with Ollama's message", err)
+	}
+
+	p, _ = newTestOllama(t, http.StatusBadRequest, `{"error":"model not found"}`)
+	if _, err := p.ChatTools(context.Background(), "", []Turn{{Role: RoleUser, Text: "q"}}, nil); err == nil || errors.Is(err, ErrContextFull) {
+		t.Errorf("other error: err = %v, want an error that isn't ErrContextFull", err)
 	}
 }

@@ -35,6 +35,12 @@ type ProviderConfig struct {
 	Timeout         time.Duration // response header timeout; 0 = provider default (120s for Anthropic)
 	Think           bool          // Ollama only: enable thinking/reasoning mode (e.g. Qwen3, DeepSeek-R1)
 	Thinking        string        // Anthropic only: "" (omit), ThinkingDisabled, or ThinkingAdaptive
+	NumCtx          int           // Ollama only: context window in tokens (options.num_ctx); 0 = Ollama's default, often 4096
+
+	// Ollama only: a prompt longer than the context window is an error
+	// (ErrContextFull) instead of being cut from the start, and generation
+	// stops at the window instead of dropping the oldest tokens.
+	NoTruncate bool
 }
 
 // Anthropic thinking modes for ProviderConfig.Thinking. The zero value ""
@@ -56,7 +62,7 @@ func New(cfg ProviderConfig) (Provider, error) {
 	case "openai":
 		return newOpenAIProvider(cfg.APIKey, cfg.Model)
 	case "ollama":
-		return newOllamaProvider(cfg.Host, cfg.Model, cfg.Think)
+		return newOllamaProvider(cfg)
 	default:
 		return nil, fmt.Errorf("llm: unknown provider %q", cfg.Provider)
 	}

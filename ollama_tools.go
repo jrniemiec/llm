@@ -50,6 +50,7 @@ type ollamaToolReq struct {
 	Tools    []ollamaToolDef `json:"tools,omitempty"`
 	Stream   bool            `json:"stream"`
 	Think    bool            `json:"think"`
+	ollamaLimits
 }
 
 type ollamaToolResp struct {
@@ -91,7 +92,7 @@ func (p *OllamaProvider) ChatTools(ctx context.Context, systemPrompt string, tur
 		return ToolReply{}, err
 	}
 	if out.Error != "" {
-		return ToolReply{}, fmt.Errorf("ollama: %s", out.Error)
+		return ToolReply{}, ollamaError(out.Error)
 	}
 	if resp.StatusCode >= 300 {
 		return ToolReply{}, fmt.Errorf("ollama API error %d: %s", resp.StatusCode, b)
@@ -137,7 +138,7 @@ func (p *OllamaProvider) buildToolReq(systemPrompt string, turns []Turn, tools [
 		defs[i].Function.Parameters = t.InputSchema
 	}
 
-	return json.Marshal(ollamaToolReq{Model: p.model, Messages: msgs, Tools: defs, Think: p.think})
+	return json.Marshal(ollamaToolReq{Model: p.model, Messages: msgs, Tools: defs, Think: p.think, ollamaLimits: p.limits()})
 }
 
 // ollamaAssistant replays Raw when this provider produced it (keeps the

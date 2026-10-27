@@ -179,7 +179,7 @@ func TestOpenAILive(t *testing.T) {
 
 func TestOllamaLive(t *testing.T) {
 	model := liveModel(t, "LLM_OLLAMA_LIVE")
-	p, err := newOllamaProvider("", model, false)
+	p, err := newOllamaProvider(ProviderConfig{Model: model})
 	if err != nil {
 		t.Fatalf("newOllamaProvider: %v", err)
 	}

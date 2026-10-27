@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -14,13 +15,20 @@ import (
 
 // OllamaProvider implements Provider for locally-hosted Ollama models.
 type OllamaProvider struct {
-	host  string
-	model string
-	think bool
-	http  *http.Client
+	host       string
+	model      string
+	think      bool
+	numCtx     int  // options.num_ctx; 0 = Ollama's default
+	noTruncate bool // send truncate and shift false
+	http       *http.Client
 }
 
-func newOllamaProvider(host, model string, think bool) (*OllamaProvider, error) {
+// ErrContextFull is returned by Ollama calls with ProviderConfig.NoTruncate
+// when the prompt doesn't fit the context window.
+var ErrContextFull = errors.New("prompt longer than the context window")
+
+func newOllamaProvider(cfg ProviderConfig) (*OllamaProvider, error) {
+	host, model := cfg.Host, cfg.Model
 	host = strings.TrimRight(strings.TrimSpace(host), "/")
 	if host == "" {
 		host = "http://localhost:11434"
@@ -29,9 +37,11 @@ func newOllamaProvider(host, model string, think bool) (*OllamaProvider, error) 
 		return nil, errors.New("ollama: model is empty")
 	}
 	return &OllamaProvider{
-		host:  host,
-		model: model,
-		think: think,
+		host:       host,
+		model:      model,
+		think:      cfg.Think,
+		numCtx:     cfg.NumCtx,
+		noTruncate: cfg.NoTruncate,
 		http: &http.Client{
 			Timeout: 0,
 			Transport: &http.Transport{
@@ -58,6 +68,52 @@ type ollamaChatReq struct {
 	Messages []ollamaMsg `json:"messages"`
 	Stream   bool        `json:"stream"`
 	Think    bool        `json:"think"` // false disables thinking/reasoning mode (e.g. Qwen3)
+	ollamaLimits
+}
+
+// ollamaLimits are the context settings sent with every /api/chat request.
+type ollamaLimits struct {
+	Options  *ollamaOptions `json:"options,omitempty"`
+	Truncate *bool          `json:"truncate,omitempty"` // false: a prompt too long is an error, not cut
+	Shift    *bool          `json:"shift,omitempty"`    // false: stop at the window, don't drop old tokens
+}
+
+type ollamaOptions struct {
+	NumCtx int `json:"num_ctx,omitempty"`
+}
+
+// limits returns p's context settings for a request.
+func (p *OllamaProvider) limits() ollamaLimits {
+	var l ollamaLimits
+	if p.numCtx > 0 {
+		l.Options = &ollamaOptions{NumCtx: p.numCtx}
+	}
+	if p.noTruncate {
+		f := false
+		l.Truncate, l.Shift = &f, &f
+	}
+	return l
+}
+
+// ollamaError returns Ollama's error message as an error, ErrContextFull
+// when the prompt didn't fit the context window.
+func ollamaError(msg string) error {
+	// Errors from Ollama's runner come as JSON inside the string:
+	// {"error":{"code":400,"message":"request (8022 tokens) exceeds …"}}.
+	var inner struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if json.Unmarshal([]byte(msg), &inner) == nil && inner.Error.Message != "" {
+		msg = inner.Error.Message
+	}
+	for _, s := range []string{"exceed_context_size_error", "exceeds the available context size", "longer than the context length"} {
+		if strings.Contains(msg, s) {
+			return fmt.Errorf("ollama: %w: %s", ErrContextFull, msg)
+		}
+	}
+	return fmt.Errorf("ollama: %s", msg)
 }
 
 type ollamaChatResp struct {
@@ -80,7 +136,7 @@ func (p *OllamaProvider) buildReq(systemPrompt string, messages []Message, strea
 		}
 		reqMsgs = append(reqMsgs, ollamaMsg{Role: role, Content: m.Content})
 	}
-	return json.Marshal(ollamaChatReq{Model: p.model, Messages: reqMsgs, Stream: stream, Think: p.think})
+	return json.Marshal(ollamaChatReq{Model: p.model, Messages: reqMsgs, Stream: stream, Think: p.think, ollamaLimits: p.limits()})
 }
 
 func (p *OllamaProvider) Chat(ctx context.Context, systemPrompt string, messages []Message) (string, Usage, error) {
@@ -109,7 +165,7 @@ func (p *OllamaProvider) Chat(ctx context.Context, systemPrompt string, messages
 		return "", Usage{}, err
 	}
 	if out.Error != "" {
-		return "", Usage{}, errors.New(out.Error)
+		return "", Usage{}, ollamaError(out.Error)
 	}
 	u := Usage{
 		InputTokens:  out.PromptEvalCount,
@@ -155,7 +211,7 @@ func (p *OllamaProvider) ChatStream(
 			continue
 		}
 		if chunk.Error != "" {
-			return sb.String(), u, errors.New(chunk.Error)
+			return sb.String(), u, ollamaError(chunk.Error)
 		}
 		d := chunk.Message.Content
 		if d != "" {
